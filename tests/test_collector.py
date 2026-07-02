@@ -19,6 +19,55 @@ from polymarket_l2_collector.file_cache import (
 )
 
 
+class TestBuildAssetToCoin:
+    """asset_id → coin_tag mapping construction."""
+
+    def test_single_coin_single_direction(self):
+        collector = Collector(interval="5m", coins=["btc"], directions=["up"])
+        assets = {"btc": {"5m": {"up": "token123"}}}
+        mapping = collector._build_asset_to_coin(assets)
+        assert mapping == {"token123": "BTC_up_5m"}
+
+    def test_two_coins_both_directions(self):
+        collector = Collector(interval="5m", coins=["btc", "eth"], directions=["up", "down"])
+        assets = {
+            "btc": {"5m": {"up": "b_up", "down": "b_down"}},
+            "eth": {"5m": {"up": "e_up", "down": "e_down"}},
+        }
+        mapping = collector._build_asset_to_coin(assets)
+        assert mapping == {"b_up": "BTC_up_5m", "b_down": "BTC_down_5m", "e_up": "ETH_up_5m", "e_down": "ETH_down_5m"}
+
+    def test_skips_missing_direction(self):
+        collector = Collector(interval="5m", coins=["btc"], directions=["up"])
+        assets = {"btc": {"5m": {"up": "bid"}}}  # down not present
+        mapping = collector._build_asset_to_coin(assets)
+        assert mapping == {"bid": "BTC_up_5m"}
+
+    def test_skips_none_asset_id(self):
+        collector = Collector(interval="5m", coins=["btc"], directions=["up"])
+        assets = {"btc": {"5m": {"up": None}}}
+        mapping = collector._build_asset_to_coin(assets)
+        assert mapping == {}
+
+    def test_empty_assets(self):
+        collector = Collector(interval="5m", coins=["btc"], directions=["up"])
+        assert collector._build_asset_to_coin({}) == {}
+
+
+class TestShouldSave:
+    """Whether the collector should save the first window."""
+
+    def test_early_in_window_returns_true(self):
+        collector = Collector(interval="5m")
+        collector._saving_enabled = True
+        assert collector._should_save() is True
+
+    def test_saving_disabled_returns_false(self):
+        collector = Collector(interval="5m")
+        collector._saving_enabled = False
+        assert collector._should_save() is False
+
+
 class TestWindowCalculation:
     """Window boundary calculations for 5m and 15m intervals."""
 
