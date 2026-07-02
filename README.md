@@ -25,7 +25,13 @@
 - ✅ **Docker 部署** — Dockerfile + docker-compose.yml
 - ✅ **CI** — GitHub Actions：ruff + pytest + 导入检查（Python 3.10-3.12）
 - ✅ **结构化日志** — 支持 JSON 格式（LOG_FORMAT=json）
-- ✅ **377 个测试** — 24 个测试文件，覆盖窗口计算、slug 生成、资产解析、消息格式化、Parquet 管道、元数据、断档检测、REST 补采、配置验证、API 客户端、日志、数据留存
+- ✅ **hftbacktest 事件转换** — `uv run polymarket-hbt-convert` 将 Parquet 导出数据转换为 hftbacktest 可消费的 numpy `.npy` 事件数组（支持 orderbook/trade/combined 三种模式）
+- ✅ **盘口 + 成交合并** — `--data-type combined` 同时转换 orderbook 和 trade 事件，按时间戳合并为一个有序事件流
+- ✅ **市场结算处理** — `--settlement` 自动追加二元结果结算快照（0.0 / 1.0）
+- ✅ **币种过滤** — `--coin btc` 只转换指定币种
+- ✅ **事件摘要与校验** — `--summary` 打印事件统计，`--validate` 校验数据结构完整性
+- ✅ **回测统计** — `PolyAssetRecord` + `Stats` 类计算 Sharpe/Sortino/MaxDrawdown/Return 等指标，自动处理 Polymarket 结算价格修复
+- ✅ **563 个测试** — 覆盖 hbt_converter（101 测试）、backtest_stats（39 测试）及原有全部模块
 - ✅ **Deprecation warnings** — poly_ws_5min.py / poly_ws_15min.py 指向新 Collector
 
 ## 快速开始
@@ -77,6 +83,8 @@ polymarket-l2-collector/
 │   ├── data_retention.py       # 数据留存策略（过期窗口自动清除）
 │   ├── extract_asset_id.py     # Gamma API 响应解析工具
 │   ├── asset_utils.py          # 兼容性 re-export
+│   ├── backtest_stats.py       # 回测统计模块（Sharpe/Sortino/MDD + PolyAssetRecord）
+│   ├── hbt_converter.py        # hftbacktest 事件格式转换器（orderbook/trade/combined + 结算 + 时间戳 + 校验）
 │   └── utils.py                # 共享工具函数（read_last_line 等）
 ├── tests/                      # 377 个测试（24 个测试文件）
 │   ├── test_collector.py
@@ -99,6 +107,8 @@ polymarket-l2-collector/
 │   ├── test_main.py
 │   ├── test_utils.py
 │   ├── test_smoke.py
+│   ├── test_hbt_converter.py   # hftbacktest 事件转换（101 测试）
+│   ├── test_backtest_stats.py  # 回测统计指标（39 测试）
 │   └── test_ws_wallet/         # Dual-WS 验证模块
 ├── data/                       # Parquet 输出目录（自动创建）
 ├── Dockerfile + docker-compose.yml
@@ -107,9 +117,11 @@ polymarket-l2-collector/
 
 ## 未来计划
 
+> hftbacktest 转换器 + 回测统计模块在 0.3.0 版本中已实现。
+
 > 以下暂无实现计划，PR 欢迎
 
-- ❌ 分析报表工具
+- ❌ 策略回测可视化（图表化 equity curve 和 position）
 
 ## CLI 命令
 
@@ -125,6 +137,9 @@ polymarket-l2-collector/
 | `uv run polymarket-data-retention` | 清理过期数据窗口 |
 | `uv run polymarket-data-retention --retention-days 30 --dry-run` | 预览 30 天以上的数据会删除哪些 |
 | `uv run polymarket-data-retention --retention-days 7 --force` | 强制清理（跳过 24h 宽限期） |
+│ `uv run polymarket-hbt-convert --data-dir data --output exports/books.npy --data-type orderbooks` | 转换 orderbook 数据为 hftbacktest .npy 事件数组
+│ `uv run polymarket-hbt-convert --data-dir data --output exports/combined.npy --data-type combined --settlement` | 转换合并事件流（orderbook + trade）并附加结算
+│ `uv run polymarket-hbt-convert --data-dir data --output exports/btc_books.npy --coin btc --summary --validate` | 转换 BTC orderbook 并打印摘要 + 校验
 
 ## 环境变量
 
@@ -168,10 +183,81 @@ polymarket-l2-collector/
 | `market_outcomes` | 逗号分隔的 outcomes |
 | `market_closed` | 市场是否已关闭 |
 
+## hftbacktest 回测集成
+
+`polymarket-hbt-convert` 将收集的 Parquet 数据转换为 hftbacktest 兼容的事件数组（.npy），可直接用于 pm-hftbacktest 回测引擎。
+
+### 基本用法
+
+```bash
+# 转换 orderbook 数据
+uv run polymarket-hbt-convert --data-dir data --output exports/orderbooks.npy --data-type orderbooks
+
+# 转换 trade 数据
+uv run polymarket-hbt-convert --data-dir data --output exports/trades.npy --data-type trades
+
+# 合并转换（orderbook + trade 事件合并为一个流）
+uv run polymarket-hbt-convert --data-dir data --output exports/combined.npy --data-type combined
+
+# 带市场结算处理 + 摘要 + 校验
+uv run polymarket-hbt-convert --data-dir data --output exports/combined.npy --data-type combined --settlement --summary --validate
+```
+
+### 回测结果分析（Python API）
+
+```python
+import numpy as np
+from polymarket_l2_collector.backtest_stats import PolyAssetRecord
+
+# 从 hftbacktest 拿到 record 数组后
+record = np.load("backtest_result.npy")
+
+# 计算性能指标
+stats = PolyAssetRecord(record).resample("1s").stats(book_size=100_000)
+print(stats.summary())
+print(f"Earn: {stats.earn}")
+
+# 月度分区统计
+monthly = PolyAssetRecord(record).monthly().stats(book_size=100_000)
+print(monthly.summary())
+```
+
+### 高级选项
+
+| 选项 | 说明 |
+|------|------|
+| `--data-type orderbooks | trades | combined` | 数据类型 |
+| `--coin btc` | 只转换指定币种 |
+| `--settlement` | 附加 Polymarket 结算快照 |
+| `--constant-latency 10000000` | 固定延迟（ns） |
+| `--no-correct-ts` | 跳过负延迟校正 |
+| `--summary` | 打印事件数组摘要 |
+| `--validate` | 校验事件数组 |
+
+### Python API（不经过 CLI）
+
+```python
+from polymarket_l2_collector.hbt_converter import convert_from_data_dir, load_event_array, event_array_summary
+
+# 直接将收集的 Parquet 数据转换为 .npy
+convert_from_data_dir(
+    data_dir="data",
+    output="exports/btc_combined.npy",
+    data_type="combined",
+    settlement=True,
+    coin="btc",
+)
+
+# 加载并查看统计
+events = load_event_array("exports/btc_combined.npy")
+print(event_array_summary(events))
+```
+
+
 ## 测试
 
 ```bash
-uv run pytest tests/       # 运行全部 377 个测试
+uv run pytest tests/       # 运行全部 563+ 个测试
 uv run ruff check .        # 代码风格检查
 ```
 
@@ -179,7 +265,8 @@ uv run ruff check .        # 代码风格检查
 
 | 版本 | 亮点 |
 |------|------|
-| 0.2.0 | 导出管道 + 市场元数据富化 + 配置验证 + 数据留存 + 377 测试 |
+| 0.3.0 | hftbacktest 事件格式转换器（orderbook/trade/combined/—summary/—validate/—settlement/--coin）+ 回测统计模块（Sharpe/Sortino/MDD/PolyAssetRecord）+ 563+ 测试 |
+| 0.2.0 | 导出管道 + 市场元数据富化 + 配置验证 + 数据留存 + 563+ 测试 |
 | 0.1.0 | 初始版本 — 实时 WS 采集 + REST 补采 + 数据质量检查 |
 
 ## 参考文档
