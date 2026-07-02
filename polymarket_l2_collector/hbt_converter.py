@@ -488,13 +488,14 @@ def rows_to_hbt(
     constant_latency: int | None = None,
     correct_ts: bool = True,
     settlement: bool = False,
+    coin: str | None = None,
 ) -> NDArray:
     """Convert collected data rows to an hftbacktest event array.
 
     Args:
         rows: List of data dicts as returned by ``export_pipeline``
             (``collect_orderbooks`` or ``collect_trades``).
-        data_type: ``"orderbooks"`` (default) or ``"trades"``.
+        data_type: ``"orderbooks"`` (default), ``"trades"``, or ``"combined"``.
         constant_latency: Optional fixed latency in nanoseconds.
             When provided it takes priority over ``local_timestamp``;
             otherwise ``local_timestamp`` is used if available, falling
@@ -504,6 +505,9 @@ def rows_to_hbt(
         settlement: If ``True`` and the rows contain a ``winning_outcome``
             field, append a resolved orderbook snapshot at the end
             reflecting the settlement price.
+        coin: If set, only process rows for this coin (e.g. ``"btc"``,
+            ``"eth"``).  The ``coin`` key must be present in each row
+            (as added by ``collect_orderbooks`` / ``collect_trades``).
 
     Returns:
         A numpy structured array with ``event_dtype``, sorted by exchange
@@ -513,6 +517,14 @@ def rows_to_hbt(
         return np.zeros(0, dtype=event_dtype)
 
     data_type = data_type.lower()
+
+    # Filter by coin if specified
+    if coin is not None:
+        coin_lower = coin.lower()
+        filtered = [r for r in rows if r.get("coin", "").lower() == coin_lower]
+        if not filtered:
+            return np.zeros(0, dtype=event_dtype)
+        rows = filtered
 
     if data_type == "orderbooks":
         # Optionally apply market settlement (appends a final book row)
@@ -716,6 +728,7 @@ def convert_from_data_dir(
     constant_latency: int | None = None,
     correct_ts: bool = True,
     settlement: bool = False,
+    coin: str | None = None,
 ) -> int:
     """Collect data from *data_dir*, convert to hftbacktest events, and save.
 
@@ -732,6 +745,7 @@ def convert_from_data_dir(
             to fix negative feed latency.
         settlement: If ``True`` and the data contains a ``winning_outcome``
             field, append a resolved orderbook snapshot.
+        coin: If set, only convert data for this coin (e.g. ``"btc"``).
 
     Returns:
         Number of events written (0 if nothing to convert).
@@ -756,6 +770,7 @@ def convert_from_data_dir(
         constant_latency=constant_latency,
         correct_ts=correct_ts,
         settlement=settlement,
+        coin=coin,
     )
     save_event_array(events, output)
     return len(events)
@@ -811,6 +826,12 @@ def main() -> None:
         action="store_true",
         help="Validate the converted event array for correctness",
     )
+    parser.add_argument(
+        "--coin",
+        type=str,
+        default=None,
+        help="Only convert data for a specific coin (e.g. 'btc', 'eth')",
+    )
     args = parser.parse_args()
 
     count = convert_from_data_dir(
@@ -820,6 +841,7 @@ def main() -> None:
         constant_latency=args.constant_latency,
         correct_ts=not args.no_correct_ts,
         settlement=args.settlement,
+        coin=args.coin,
     )
     if count > 0:
         print(f"✅ Converted {count} events → {args.output}")

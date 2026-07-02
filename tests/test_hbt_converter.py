@@ -797,6 +797,43 @@ class TestRowsToHbt:
         assert len(events) > 0
         assert events[0]["ev"] & DEPTH_CLEAR_EVENT
 
+    def test_coin_filter_btc(self):
+        """coin='btc' should only process rows with coin='btc'."""
+        rows = [
+            {"timestamp": "1000", "coin": "btc", "bids": [{"price": 0.50, "size": 100}], "asks": []},
+            {"timestamp": "2000", "coin": "eth", "bids": [{"price": 0.60, "size": 100}], "asks": []},
+        ]
+        events = rows_to_hbt(rows, data_type="orderbooks", coin="btc")
+        assert len(events) > 0
+        # All events should have exch_ts=1000 (only BTC rows)
+        assert all(ev["exch_ts"] == 1000000000 for ev in events if ev["ev"] & EXCH_EVENT)
+
+    def test_coin_filter_case_insensitive(self):
+        rows = [
+            {"timestamp": "1000", "coin": "BTC", "bids": [{"price": 0.50, "size": 100}], "asks": []},
+        ]
+        events = rows_to_hbt(rows, data_type="orderbooks", coin="btc")
+        assert len(events) > 0
+
+    def test_coin_filter_no_match(self):
+        rows = [
+            {"timestamp": "1000", "coin": "btc", "bids": [{"price": 0.50, "size": 100}], "asks": []},
+        ]
+        events = rows_to_hbt(rows, data_type="orderbooks", coin="eth")
+        assert len(events) == 0
+
+    def test_coin_filter_none_returns_all(self):
+        rows = [
+            {"timestamp": "1000", "coin": "btc", "bids": [{"price": 0.50, "size": 100}], "asks": []},
+            {"timestamp": "2000", "coin": "eth", "bids": [{"price": 0.60, "size": 100}], "asks": []},
+        ]
+        events = rows_to_hbt(rows, data_type="orderbooks", coin=None)
+        assert len(events) > 0
+        # Both timestamps should be present
+        ts_set = {ev["exch_ts"] for ev in events if ev["ev"] & EXCH_EVENT}
+        assert 1000000000 in ts_set
+        assert 2000000000 in ts_set
+
 
 # ── Save / Load ──────────────────────────────────────────────────────────
 
