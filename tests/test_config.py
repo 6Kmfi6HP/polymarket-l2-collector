@@ -97,6 +97,13 @@ class TestDefaults:
         s = Settings()
         assert s.chain_verify_enabled is False
 
+    def test_default_data_retention(self) -> None:
+        s = Settings()
+        assert s.data_retention_days == 0
+
+
+# ── Environment overrides ──────────────────────────────────────────────
+
 
 # ── Environment overrides ──────────────────────────────────────────────
 
@@ -143,6 +150,11 @@ class TestEnvOverrides:
         monkeypatch.setenv("WALLET_VERIFY_INTERVAL", "2.5")
         s = Settings()
         assert s.wallet_verify_interval == 2.5
+
+    def test_data_retention_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATA_RETENTION_DAYS", "7")
+        s = Settings()
+        assert s.data_retention_days == 7
 
 
 # ── Validation: success ────────────────────────────────────────────────
@@ -246,6 +258,12 @@ class TestValidationFailure:
             s.validate()
         assert any("WALLET_PRIMARY_TIMEOUT" in m for m in exc.value.messages)
         assert any("WALLET_VERIFY_INTERVAL" in m for m in exc.value.messages)
+
+    def test_negative_data_retention(self) -> None:
+        s = Settings(data_retention_days=-1)
+        with pytest.raises(SettingsValidationError) as exc:
+            s.validate()
+        assert any("DATA_RETENTION_DAYS" in m for m in exc.value.messages)
 
 
 # ── Derived helpers ─────────────────────────────────────────────────────
