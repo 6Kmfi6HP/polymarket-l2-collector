@@ -7,6 +7,8 @@ import tempfile
 from pathlib import Path
 
 from polymarket_l2_collector.window_metadata import (
+    WindowMeta,
+    _init_meta,
     _metadata_path,
     get_or_create_meta,
     mark_complete,
@@ -134,6 +136,34 @@ class TestMetadataWrite:
         pp = "data/5m/btc/orderbooks/1765359900up.parquet"
         mp = _metadata_path(pp)
         assert mp == "data/5m/btc/orderbooks/1765359900up.meta.json"
+
+    def test_ts_to_iso_converts_unix(self):
+        from polymarket_l2_collector.window_metadata import _ts_to_iso
+
+        result = _ts_to_iso(1_700_000_000)
+        assert result.startswith("2023-11-14T22:13:20")
+
+    def test_ts_to_iso_zero(self):
+        from polymarket_l2_collector.window_metadata import _ts_to_iso
+
+        result = _ts_to_iso(0)
+        assert result.startswith("1970-01-01T00:00:00")
+
+    def test_init_meta_stores_and_returns(self):
+        meta = _init_meta("5m", "btc", "orderbooks", "up", 1000, "btc-updown-5m-1000", "token_abc")
+        assert isinstance(meta, WindowMeta)
+        assert meta.interval == "5m"
+        assert meta.coin == "btc"
+        assert meta.market_slug == "btc-updown-5m-1000"
+        assert meta.asset_id == "token_abc"
+        assert meta.window_ts == 1000
+
+    def test_init_meta_creates_different_keys(self):
+        m1 = _init_meta("5m", "btc", "orderbooks", "up", 1000, "slug1", "id1")
+        m2 = _init_meta("5m", "btc", "orderbooks", "down", 1000, "slug2", "id2")
+        assert m1 is not m2
+        assert m1.direction == "up"
+        assert m2.direction == "down"
 
 
 class TestDataQualityScan:
