@@ -279,13 +279,14 @@ def _make_book_events(
     2. One ``DEPTH_SNAPSHOT_EVENT | BUY_EVENT`` / ``DEPTH_SNAPSHOT_EVENT | SELL_EVENT``
        per price level in that row.
 
-    Rows are sorted by timestamp before processing.
+    Rows are sorted by timestamp before processing (a copy is sorted, so the
+    original list is not mutated).
     """
     if not book_rows:
         return np.zeros(0, dtype=event_dtype)
 
-    # Sort by exchange timestamp
-    book_rows.sort(key=lambda r: str(r.get("timestamp", "0")))
+    # Sort by exchange timestamp (copy to avoid mutating input)
+    book_rows = sorted(book_rows, key=lambda r: str(r.get("timestamp", "0")))
 
     # Pre-compute total output size
     total_rows = 0
@@ -354,12 +355,14 @@ def _make_trade_events(
     Each trade row produces one ``TRADE_EVENT | BUY_EVENT`` or
     ``TRADE_EVENT | SELL_EVENT`` entry.
 
-    Rows are sorted by timestamp before processing.
+    Rows are sorted by timestamp before processing (a copy is sorted, so the
+    original list is not mutated).
     """
     if not trade_rows:
         return np.zeros(0, dtype=event_dtype)
 
-    trade_rows.sort(key=lambda r: str(r.get("timestamp", "0")))
+    # Sort by exchange timestamp (copy to avoid mutating input)
+    trade_rows = sorted(trade_rows, key=lambda r: str(r.get("timestamp", "0")))
     out = np.zeros(len(trade_rows), dtype=event_dtype)
 
     for i, row in enumerate(trade_rows):
