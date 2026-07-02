@@ -536,6 +536,110 @@ class TestApplyMarketSettlement:
         assert len(result) == 1  # no change
 
 
+# ── Event array summary ──────────────────────────────────────────────────
+
+
+class TestEventArraySummary:
+    def test_empty_array(self):
+        from polymarket_l2_collector.hbt_converter import event_array_summary
+
+        s = event_array_summary(np.zeros(0, dtype=event_dtype))
+        assert s["total_events"] == 0
+
+    def test_with_events(self):
+        from polymarket_l2_collector.hbt_converter import event_array_summary
+
+        data = np.zeros(4, dtype=event_dtype)
+        data["ev"] = [
+            DEPTH_CLEAR_EVENT | BUY_EVENT | EXCH_EVENT | LOCAL_EVENT,
+            DEPTH_SNAPSHOT_EVENT | BUY_EVENT | EXCH_EVENT | LOCAL_EVENT,
+            TRADE_EVENT | BUY_EVENT | EXCH_EVENT | LOCAL_EVENT,
+            TRADE_EVENT | SELL_EVENT | EXCH_EVENT | LOCAL_EVENT,
+        ]
+        data["exch_ts"] = [100, 200, 300, 400]
+        s = event_array_summary(data)
+        assert s["total_events"] == 4
+        assert s["num_depth_clear"] == 1
+        assert s["num_depth_snapshot"] == 1
+        assert s["num_trade"] == 2
+        assert s["start_ts"] == 100
+        assert s["end_ts"] == 400
+
+    def test_print_does_not_crash(self):
+        import io
+        import sys
+
+        from polymarket_l2_collector.hbt_converter import print_event_array_summary
+
+        data = np.zeros(2, dtype=event_dtype)
+        data["ev"] = [DEPTH_CLEAR_EVENT | BUY_EVENT, TRADE_EVENT | SELL_EVENT]
+        data["exch_ts"] = [100, 200]
+
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            print_event_array_summary(data)
+        finally:
+            sys.stdout = old_stdout
+
+
+# ── Event array validation ───────────────────────────────────────────────
+
+
+class TestValidateEventArray:
+    def test_empty_is_valid(self):
+        from polymarket_l2_collector.hbt_converter import validate_event_array
+
+        assert validate_event_array(np.zeros(0, dtype=event_dtype)) == []
+
+    def test_valid_array(self):
+        from polymarket_l2_collector.hbt_converter import validate_event_array
+
+        data = np.zeros(3, dtype=event_dtype)
+        data["ev"] = (
+            DEPTH_CLEAR_EVENT | BUY_EVENT | EXCH_EVENT | LOCAL_EVENT,
+            DEPTH_SNAPSHOT_EVENT | BUY_EVENT | EXCH_EVENT | LOCAL_EVENT,
+            TRADE_EVENT | BUY_EVENT | EXCH_EVENT | LOCAL_EVENT,
+        )
+        data["exch_ts"] = [100, 200, 300]
+        data["local_ts"] = [110, 210, 310]
+        assert validate_event_array(data) == []
+
+    def test_nan_price(self):
+        from polymarket_l2_collector.hbt_converter import validate_event_array
+
+        data = np.zeros(1, dtype=event_dtype)
+        data["ev"] = DEPTH_SNAPSHOT_EVENT | BUY_EVENT | EXCH_EVENT | LOCAL_EVENT
+        data["px"] = np.nan
+        issues = validate_event_array(data)
+        assert any("NaN price" in i for i in issues)
+
+    def test_missing_flag(self):
+        from polymarket_l2_collector.hbt_converter import validate_event_array
+
+        data = np.zeros(1, dtype=event_dtype)
+        data["ev"] = DEPTH_CLEAR_EVENT  # no EXCH or LOCAL flag
+        issues = validate_event_array(data)
+        assert any("neither EXCH_EVENT nor LOCAL_EVENT" in i for i in issues)
+
+    def test_out_of_range_price(self):
+        from polymarket_l2_collector.hbt_converter import validate_event_array
+
+        data = np.zeros(2, dtype=event_dtype)
+        data["ev"] = DEPTH_SNAPSHOT_EVENT | BUY_EVENT | EXCH_EVENT | LOCAL_EVENT
+        data["px"] = [0.5, 999.0]
+        data["exch_ts"] = [100, 200]
+        issues = validate_event_array(data)
+        assert any("above 2.0" in i for i in issues)
+
+    def test_invalid_dtype(self):
+        from polymarket_l2_collector.hbt_converter import validate_event_array
+
+        data = np.zeros(2, dtype=np.float64)
+        issues = validate_event_array(data)
+        assert any("Invalid dtype" in i for i in issues)
+
+
 # ── Rows to HBT (integration) ────────────────────────────────────────────
 
 

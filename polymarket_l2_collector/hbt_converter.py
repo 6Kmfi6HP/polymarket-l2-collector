@@ -582,6 +582,129 @@ def load_event_array(path: str) -> NDArray:
     return np.load(path)
 
 
+# ── Event array utilities ────────────────────────────────────────────────
+
+
+def event_array_summary(events: NDArray) -> dict[str, Any]:
+    """Return a summary dict for an hftbacktest event array.
+
+    Includes total event count, time span, and per-type event counts.
+
+    Args:
+        events: Numpy structured array with ``event_dtype``.
+
+    Returns:
+        Dict with keys: ``total_events``, ``start_ts``, ``end_ts``,
+        ``duration_ns``, ``num_depth_clear``, ``num_depth_snapshot``,
+        ``num_trade``, ``num_exch_events``, ``num_local_events``.
+    """
+    total = len(events)
+    if total == 0:
+        return {
+            "total_events": 0,
+            "start_ts": 0,
+            "end_ts": 0,
+            "duration_ns": 0,
+            "num_depth_clear": 0,
+            "num_depth_snapshot": 0,
+            "num_trade": 0,
+            "num_exch_events": 0,
+            "num_local_events": 0,
+        }
+
+    return {
+        "total_events": total,
+        "start_ts": int(events["exch_ts"].min()),
+        "end_ts": int(events["exch_ts"].max()),
+        "duration_ns": int(events["exch_ts"].max() - events["exch_ts"].min()),
+        "num_depth_clear": int(np.sum((events["ev"] & 7) == DEPTH_CLEAR_EVENT)),
+        "num_depth_snapshot": int(np.sum((events["ev"] & 7) == DEPTH_SNAPSHOT_EVENT)),
+        "num_trade": int(np.sum((events["ev"] & 7) == TRADE_EVENT)),
+        "num_exch_events": int(np.sum((events["ev"] & EXCH_EVENT) == EXCH_EVENT)),
+        "num_local_events": int(np.sum((events["ev"] & LOCAL_EVENT) == LOCAL_EVENT)),
+    }
+
+
+def print_event_array_summary(events: NDArray, title: str = "Event Array Summary") -> None:
+    """Print a human-readable summary of an event array to stdout."""
+    s = event_array_summary(events)
+    print(f"\n{'=' * 55}")
+    print(f"  {title}")
+    print(f"{'=' * 55}")
+    print(f"  Total events:      {s['total_events']:>8}")
+    if s["total_events"] > 0:
+        print(f"  Start timestamp:   {s['start_ts']:>20,}")
+        print(f"  End timestamp:     {s['end_ts']:>20,}")
+        print(f"  Duration (ns):     {s['duration_ns']:>20,}")
+        print(f"  Duration (hours):  {s['duration_ns'] / 3.6e12:>15.2f}")
+        print("  ── Event breakdown ───────────────")
+        print(f"  Depth clear:       {s['num_depth_clear']:>8}")
+        print(f"  Depth snapshot:    {s['num_depth_snapshot']:>8}")
+        print(f"  Trade:             {s['num_trade']:>8}")
+        print(f"  Exchange events:   {s['num_exch_events']:>8}")
+        print(f"  Local events:      {s['num_local_events']:>8}")
+    print(f"{'=' * 55}")
+
+
+def validate_event_array(events: NDArray) -> list[str]:
+    """Validate an event array's structure and ordering.
+
+    Returns a list of warning/error messages (empty = valid).
+    """
+    issues: list[str] = []
+
+    if len(events) == 0:
+        return issues
+
+    # Check dtype
+    if events.dtype != event_dtype:
+        issues.append(f"Invalid dtype: {events.dtype} (expected {event_dtype})")
+        return issues  # can't validate further
+
+    # Check for NaN prices
+    nan_px = np.isnan(events["px"]).sum()
+    if nan_px > 0:
+        issues.append(f"{nan_px} event(s) have NaN price")
+
+    # Check for NaN qty
+    nan_qty = np.isnan(events["qty"]).sum()
+    if nan_qty > 0:
+        issues.append(f"{nan_qty} event(s) have NaN quantity")
+
+    # Check each event has at least one of EXCH_EVENT or LOCAL_EVENT
+    no_flag = ~(events["ev"] & EXCH_EVENT == EXCH_EVENT) & ~(events["ev"] & LOCAL_EVENT == LOCAL_EVENT)
+    no_flag_count = int(no_flag.sum())
+    if no_flag_count > 0:
+        issues.append(f"{no_flag_count} event(s) have neither EXCH_EVENT nor LOCAL_EVENT flag")
+
+    # Check exch_ts ordering for EXCH_EVENT-marked events
+    exch_mask = events["ev"] & EXCH_EVENT == EXCH_EVENT
+    if exch_mask.any():
+        exch_ts = events["exch_ts"][exch_mask]
+        out_of_order = int(np.sum(np.diff(exch_ts) < 0))
+        if out_of_order > 0:
+            issues.append(f"{out_of_order} exchange event(s) are out of order")
+
+    # Check local_ts ordering for LOCAL_EVENT-marked events
+    local_mask = events["ev"] & LOCAL_EVENT == LOCAL_EVENT
+    if local_mask.any():
+        local_ts = events["local_ts"][local_mask]
+        out_of_order = int(np.sum(np.diff(local_ts) < 0))
+        if out_of_order > 0:
+            issues.append(f"{out_of_order} local event(s) are out of order")
+
+    # Check for unreasonable prices
+    if len(events) > 0:
+        px_min = float(events["px"].min())
+        px_max = float(events["px"].max())
+        if px_min < -1.0:
+            issues.append(f"Minimum price {px_min} is below -1.0 (possible data issue)")
+        if px_max > 2.0:
+            issues.append(f"Maximum price {px_max} is above 2.0 (possible data issue)")
+
+    return issues
+
+
 # ── Pipeline integration ─────────────────────────────────────────────────
 
 
@@ -678,6 +801,16 @@ def main() -> None:
         action="store_true",
         help="Skip negative feed latency correction (default: auto-correct)",
     )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print event array summary after conversion",
+    )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate the converted event array for correctness",
+    )
     args = parser.parse_args()
 
     count = convert_from_data_dir(
@@ -690,6 +823,18 @@ def main() -> None:
     )
     if count > 0:
         print(f"✅ Converted {count} events → {args.output}")
+        if args.summary or args.validate:
+            events = load_event_array(args.output)
+            if args.summary:
+                print_event_array_summary(events)
+            if args.validate:
+                issues = validate_event_array(events)
+                if issues:
+                    print(f"\n⚠️  Validation found {len(issues)} issue(s):")
+                    for issue in issues:
+                        print(f"  - {issue}")
+                else:
+                    print("\n✅ Event array validation passed")
     else:
         print("⚠️  Nothing to convert (no data files found)")
 
