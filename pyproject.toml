@@ -24,6 +24,7 @@ dev = [
     "pytest>=7.0.0",
     "ruff>=0.1.0",
     "pyright>=1.1.300",
+    "polars>=1.0.0",
 ]
 
 [project.scripts]
@@ -34,6 +35,13 @@ polymarket-export = "polymarket_l2_collector.export_pipeline:main"
 polymarket-pipeline = "polymarket_l2_collector.pipeline:main"
 polymarket-data-retention = "polymarket_l2_collector.data_retention:main"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+filterwarnings = ["ignore::DeprecationWarning:websockets"]
+log_cli_level = "WARNING"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -43,11 +51,6 @@ packages = ["polymarket_l2_collector"]
 
 [tool.hatch.build.targets.sdist]
 exclude = ["tests/", "data/", "logs/"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_functions = ["test_*"]
 
 [tool.ruff]
 line-length = 120
@@ -66,5 +69,7 @@ reportMissingTypeStubs = "none"
 
 [dependency-groups]
 dev = [
+    "polars>=1.42.1",
     "pytest-asyncio>=0.24.0",
+    "ruff>=0.15.20",
 ]
