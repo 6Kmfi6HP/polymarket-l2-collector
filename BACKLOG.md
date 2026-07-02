@@ -20,3 +20,4 @@
 | 数据留存策略：可配置 DATA_RETENTION_DAYS，purge_old_data 删除过期窗口 Parquet+meta，24h 宽限期保护，--dry-run / --force CLI | 参照 poly_data 的 `process_live` 增量处理模式（不积累过期数据） | 待测 | |
 | README 文档重写：完整 CLI 命令表、环境变量表、模块结构图、v0.3.0 版本历史 | 项目自身文档需求 | 完成 | |
 | collector.py 内部函数单元测试：_build_asset_to_coin 的 asset_id→coin_tag 映射逻辑（多币种/方向/None）和 _should_save 开关 | 项目自身质量需求（最后的大型代码缺口） | 待测 | |
+| .env.example 同步：新增 Wallet/Dual-WS/Chain Verify/Data Retention/Health Check 等 9 个缺失的配置项 | 项目运维质量 | 待测 | |
