@@ -21,7 +21,9 @@ import os
 from typing import Any
 
 from .file_cache import restore_from_parquet
+from .get_asset_id import get_market_info_by_slug
 from .logger_config import get_logger
+from .market_discovery import _build_event_slug
 
 logger = get_logger("export_pipeline")
 
@@ -259,6 +261,65 @@ def write_csv(rows: list[dict[str, Any]], output_path: str) -> int:
     return len(df)
 
 
+# ── Market enrichment ──────────────────────────────────────────────────
+
+
+def enrich_with_markets(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Enrich collected rows with market metadata (question, slug, outcomes, closed).
+
+    For each unique ``(coin, interval, window_ts)`` combination among the rows,
+    builds the Polymarket event slug and fetches market info from the Gamma API
+    (with in-memory caching so each slug is fetched only once).  Rows whose
+    slug can't be resolved are left as-is (no metadata added).
+
+    Added columns: ``market_question``, ``market_slug``, ``market_outcomes``,
+    ``market_closed``.
+
+    Args:
+        rows: Collected trade or orderbook rows (must have ``coin``, ``interval``,
+            and ``window_ts`` keys).
+
+    Returns:
+        A new list of dicts with market metadata appended.
+    """
+    # In-memory cache: slug → market_info
+    _cache: dict[str, dict[str, Any] | None] = {}
+
+    def _get_market(slug: str) -> dict[str, Any] | None:
+        if slug not in _cache:
+            markets = get_market_info_by_slug(slug)
+            if markets and len(markets) > 0:
+                _cache[slug] = markets[0]
+            else:
+                _cache[slug] = None
+        return _cache[slug]
+
+    enriched: list[dict[str, Any]] = []
+    enriched_count = 0
+    for row in rows:
+        coin = row.get("coin")
+        interval = row.get("interval")
+        window_ts = row.get("window_ts")
+        if coin and interval and window_ts is not None:
+            slug = _build_event_slug(coin, interval, int(window_ts))
+            info = _get_market(slug)
+            if info is not None:
+                row["market_question"] = info.get("question")
+                row["market_slug"] = slug
+                outcomes = info.get("outcomes")
+                if isinstance(outcomes, (list, tuple)):
+                    row["market_outcomes"] = ",".join(str(o) for o in outcomes)
+                row["market_closed"] = info.get("closed")
+                enriched_count += 1
+        enriched.append(row)
+
+    if enriched_count:
+        logger.info("Enriched %d rows with market metadata (%d unique slugs)", enriched_count, len(_cache))
+    else:
+        logger.info("No rows enriched — market slugs could not be resolved")
+    return enriched
+
+
 # ── Pipeline entrypoint ───────────────────────────────────────────────
 
 
@@ -267,8 +328,9 @@ def export_pipeline(
     output: str = "exports/consolidated.parquet",
     data_type: str = "trades",
     dedup: bool = True,
+    enrich: bool = False,
 ) -> int:
-    """Run the full export pipeline: scan → collect → dedup → write.
+    """Run the full export pipeline: scan → collect → dedup → enrich → write.
 
     Args:
         data_dir: Root data directory to scan.
@@ -276,16 +338,19 @@ def export_pipeline(
             select the format; anything else defaults to Parquet.
         data_type: ``"trades"`` or ``"orderbooks"``.
         dedup: If ``True`` (default), remove duplicate rows before writing.
+        enrich: If ``True``, attach market metadata (question, slug, outcomes)
+            by resolving each window's event slug against the Gamma API.
 
     Returns:
         Number of rows written (0 if nothing to export).
     """
     logger.info(
-        "Export pipeline: data_dir=%s output=%s data_type=%s dedup=%s",
+        "Export pipeline: data_dir=%s output=%s data_type=%s dedup=%s enrich=%s",
         data_dir,
         output,
         data_type,
         dedup,
+        enrich,
     )
 
     if data_type == "trades":
@@ -304,6 +369,9 @@ def export_pipeline(
         after = len(rows)
         if before > after:
             logger.info("Dedup removed %d duplicate rows", before - after)
+
+    if enrich:
+        rows = enrich_with_markets(rows)
 
     _sort_by_ts(rows)
 
@@ -374,6 +442,11 @@ def main() -> None:
         help="Skip duplicate removal (default: dedup is enabled)",
     )
     parser.add_argument(
+        "--enrich",
+        action="store_true",
+        help="Attach market metadata (question, slug, outcomes) via Gamma API",
+    )
+    parser.add_argument(
         "--summary",
         action="store_true",
         help="Show summary report and exit without exporting",
@@ -396,6 +469,7 @@ def main() -> None:
         output=args.output,
         data_type=args.data_type,
         dedup=not args.no_dedup,
+        enrich=args.enrich,
     )
     if count > 0:
         print(f"\n✅ Exported {count} rows → {args.output}")

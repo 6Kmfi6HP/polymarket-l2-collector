@@ -6,3 +6,4 @@
 | 缺失代币回填：扫描已收集数据发现未注册代币，从 Gamma API 批量抓取元数据并持久化 | poly_data `poly_utils/utils.py` `update_missing_tokens()` | 待测 | |
 | CLOB 全量市场列表下载：从 CLOB API 分页并发抓取全部市场，写入 markets.csv，支持断点续传 | poly_data `update_utils/update_markets.py` | 待测 | |
 | 管道编排：串联 markets → export 等阶段，CLI 入口 `polymarket-pipeline` | poly_data `update_utils/pipeline.py` | 待测 | |
+| 市场元数据富化：导出时通过 slug 从 Gamma API 获取 question/outcomes/closed 并附加到每行 | 受 poly_data `process_live._processed_df()` 启发（JOIN 市场元数据模式） | 待测 | |

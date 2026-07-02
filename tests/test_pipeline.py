@@ -26,6 +26,7 @@ class TestRunPipeline:
                 output=f"{tmp_path}/out.parquet",
                 data_type="trades",
                 dedup=True,
+                enrich=False,
             )
 
     def test_skip_export(self, tmp_path) -> None:
@@ -56,6 +57,7 @@ class TestRunPipeline:
                 output=f"{tmp_path}/out.parquet",
                 data_type="trades",
                 dedup=False,
+                enrich=False,
             )
 
     def test_passes_data_type(self, tmp_path) -> None:
@@ -71,6 +73,7 @@ class TestRunPipeline:
                 output=f"{tmp_path}/out.parquet",
                 data_type="orderbooks",
                 dedup=True,
+                enrich=False,
             )
 
 
@@ -92,6 +95,7 @@ class TestMainCli:
                 data_type="trades",
                 dedup=True,
                 skip_export=False,
+                enrich=False,
             )
 
     def test_main_with_flags(self, tmp_path) -> None:
@@ -113,6 +117,7 @@ class TestMainCli:
                 data_type="orderbooks",
                 dedup=False,
                 skip_export=True,
+                enrich=False,
             )
 
     def test_main_skip_export_flag(self, tmp_path) -> None:
@@ -130,4 +135,23 @@ class TestMainCli:
                 data_type="trades",
                 dedup=True,
                 skip_export=True,
+                enrich=False,
+            )
+
+    def test_main_enrich_flag(self, tmp_path) -> None:
+        """--enrich flag is propagated."""
+        from polymarket_l2_collector.pipeline import main
+
+        with patch(
+            "polymarket_l2_collector.pipeline.run_pipeline",
+        ) as mock_run:
+            with patch("sys.argv", ["pipeline", "--enrich"]):
+                main()
+            mock_run.assert_called_once_with(
+                data_dir="data",
+                output="exports/consolidated.parquet",
+                data_type="trades",
+                dedup=True,
+                skip_export=False,
+                enrich=True,
             )

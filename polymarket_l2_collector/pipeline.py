@@ -55,6 +55,7 @@ def run_pipeline(
     data_type: str = "trades",
     dedup: bool = True,
     skip_export: bool = False,
+    enrich: bool = False,
 ) -> int:
     """Run the full pipeline: markets → export.
 
@@ -64,6 +65,8 @@ def run_pipeline(
         data_type: Data type to export ("trades" or "orderbooks").
         dedup: Remove duplicate rows during export.
         skip_export: If True, only run the markets stage.
+        enrich: If True, attach market metadata (question, slug, outcomes)
+            during the export stage.
 
     Returns:
         Number of rows exported (0 if skipped or nothing to export).
@@ -92,6 +95,7 @@ def run_pipeline(
         output=output,
         data_type=data_type,
         dedup=dedup,
+        enrich=enrich,
     )
 
     print("=" * 60)
@@ -136,6 +140,11 @@ def main() -> None:
         action="store_true",
         help="Only run the markets stage, skip export",
     )
+    parser.add_argument(
+        "--enrich",
+        action="store_true",
+        help="Attach market metadata (question, slug, outcomes) via Gamma API",
+    )
     args = parser.parse_args()
 
     run_pipeline(
@@ -144,6 +153,7 @@ def main() -> None:
         data_type=args.data_type,
         dedup=not args.no_dedup,
         skip_export=args.skip_export,
+        enrich=args.enrich,
     )
 
 

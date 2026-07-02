@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -279,7 +280,7 @@ class TestExportPipeline:
     def test_trade_export_to_parquet(self):
         self._make_files()
         out = os.path.join(self.tmpdir, "exports.parquet")
-        n = export_pipeline(data_dir=self.tmpdir, output=out, data_type="trades", dedup=True)
+        n = export_pipeline(data_dir=self.tmpdir, output=out, data_type="trades", dedup=True, enrich=False)
         assert n > 0
         df = pd.read_parquet(out)
         assert len(df) == n
@@ -289,14 +290,14 @@ class TestExportPipeline:
     def test_trade_export_to_csv(self):
         self._make_files()
         out = os.path.join(self.tmpdir, "exports.csv")
-        n = export_pipeline(data_dir=self.tmpdir, output=out, data_type="trades", dedup=True)
+        n = export_pipeline(data_dir=self.tmpdir, output=out, data_type="trades", dedup=True, enrich=False)
         assert n > 0
         df = pd.read_csv(out)
         assert len(df) == n
 
     def test_pipeline_no_data(self):
         out = os.path.join(self.tmpdir, "nope.parquet")
-        n = export_pipeline(data_dir=self.tmpdir, output=out, data_type="trades")
+        n = export_pipeline(data_dir=self.tmpdir, output=out, data_type="trades", enrich=False)
         assert n == 0
 
 
@@ -324,3 +325,128 @@ class TestSummaryReport:
         assert report["by_type"]["orderbooks"] == 1
         assert report["by_coin"]["btc"] == 3
         assert report["window_count"] == 3  # 3 distinct (interval, coin, direction, ts) combos
+
+
+# ── Market enrichment ──────────────────────────────────────────────────
+
+
+class TestEnrichWithMarkets:
+    """Market metadata enrichment — resolving slugs and attaching metadata."""
+
+    def test_enriches_matching_rows(self):
+        """Rows with coin/interval/window_ts are enriched with market metadata."""
+        from polymarket_l2_collector.export_pipeline import enrich_with_markets
+
+        rows = [
+            {"coin": "btc", "interval": "5m", "window_ts": 1765359900, "price": "0.50"},
+            {"coin": "eth", "interval": "15m", "window_ts": 1765359900, "price": "0.55"},
+        ]
+        with patch(
+            "polymarket_l2_collector.export_pipeline.get_market_info_by_slug",
+            return_value=[
+                {
+                    "question": "BTC > $100k?",
+                    "outcomes": ["Up", "Down"],
+                    "closed": False,
+                }
+            ],
+        ):
+            result = enrich_with_markets(rows)
+
+        assert len(result) == 2
+        assert result[0]["market_question"] == "BTC > $100k?"
+        assert result[0]["market_slug"] == "btc-updown-5m-1765359900"
+        assert result[0]["market_outcomes"] == "Up,Down"
+        assert result[0]["market_closed"] is False
+        assert result[0]["price"] == "0.50"  # original data preserved
+
+    def test_handles_api_failure_gracefully(self):
+        """When the Gamma API returns None, rows are passed through unchanged."""
+        from polymarket_l2_collector.export_pipeline import enrich_with_markets
+
+        rows = [{"coin": "btc", "interval": "5m", "window_ts": 1}]
+        with patch(
+            "polymarket_l2_collector.export_pipeline.get_market_info_by_slug",
+            return_value=None,
+        ):
+            result = enrich_with_markets(rows)
+
+        assert len(result) == 1
+        assert "market_question" not in result[0]
+
+    def test_handles_empty_rows(self):
+        """Empty input returns empty output."""
+        from polymarket_l2_collector.export_pipeline import enrich_with_markets
+
+        assert enrich_with_markets([]) == []
+
+    def test_missing_fields_skipped(self):
+        """Rows without coin/interval/window_ts are passed through unenriched."""
+        from polymarket_l2_collector.export_pipeline import enrich_with_markets
+
+        rows = [{"price": "0.50"}]  # no coin, interval, window_ts
+        with patch(
+            "polymarket_l2_collector.export_pipeline.get_market_info_by_slug",
+            return_value=[{"question": "Q?"}],
+        ):
+            result = enrich_with_markets(rows)
+
+        assert len(result) == 1
+        assert "market_question" not in result[0]
+
+    def test_caches_slug_lookups(self):
+        """Same slug should only be fetched once from the API."""
+        from polymarket_l2_collector.export_pipeline import enrich_with_markets
+
+        rows = [
+            {"coin": "btc", "interval": "5m", "window_ts": 1000, "price": "0.5"},
+            {"coin": "btc", "interval": "5m", "window_ts": 1000, "price": "0.6"},
+        ]
+        with patch(
+            "polymarket_l2_collector.export_pipeline.get_market_info_by_slug",
+            return_value=[{"question": "Q?", "outcomes": ["A", "B"]}],
+        ) as mock_get:
+            result = enrich_with_markets(rows)
+
+        assert len(result) == 2
+        assert result[0]["market_question"] == "Q?"
+        assert result[1]["market_question"] == "Q?"
+        # Slug should only be fetched once (cached after first hit)
+        mock_get.assert_called_once_with("btc-updown-5m-1000")
+
+    def test_enrich_flag_calls_enrich_function(self, tmp_path):
+        """When enrich=True, export_pipeline calls enrich_with_markets."""
+        from polymarket_l2_collector.export_pipeline import export_pipeline
+
+        with (
+            patch("polymarket_l2_collector.export_pipeline.collect_trades", return_value=[]),
+            patch("polymarket_l2_collector.export_pipeline.enrich_with_markets") as mock_enrich,
+        ):
+            export_pipeline(data_dir=str(tmp_path), output=f"{tmp_path}/out.parquet", enrich=True)
+            mock_enrich.assert_not_called()  # empty rows → skip enrichment
+
+        with (
+            patch(
+                "polymarket_l2_collector.export_pipeline.collect_trades",
+                return_value=[{"coin": "btc", "interval": "5m", "window_ts": 1000}],
+            ),
+            patch("polymarket_l2_collector.export_pipeline.write_parquet", return_value=1),
+            patch("polymarket_l2_collector.export_pipeline.enrich_with_markets") as mock_enrich,
+        ):
+            export_pipeline(data_dir=str(tmp_path), output=f"{tmp_path}/out.parquet", enrich=True)
+            mock_enrich.assert_called_once()
+
+    def test_enrich_flag_false_skips_enrich(self, tmp_path):
+        """When enrich=False, enrich_with_markets should not be called."""
+        from polymarket_l2_collector.export_pipeline import export_pipeline
+
+        with (
+            patch(
+                "polymarket_l2_collector.export_pipeline.collect_trades",
+                return_value=[{"coin": "btc", "interval": "5m", "window_ts": 1000}],
+            ),
+            patch("polymarket_l2_collector.export_pipeline.write_parquet", return_value=1),
+            patch("polymarket_l2_collector.export_pipeline.enrich_with_markets") as mock_enrich,
+        ):
+            export_pipeline(data_dir=str(tmp_path), output=f"{tmp_path}/out.parquet", enrich=False)
+            mock_enrich.assert_not_called()
