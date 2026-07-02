@@ -96,6 +96,148 @@ def _local_ts_ns(
     return exch_ts_ns + DEFAULT_LATENCY_NS
 
 
+# ── Timestamp correction ──────────────────────────────────────────────────
+
+
+def correct_local_timestamp(data: NDArray, base_latency: float = 0.0) -> NDArray:
+    """Correct negative feed latency by offsetting local timestamps.
+
+    If the minimum feed latency (``local_ts - exch_ts``) across the data
+    is negative, all local timestamps are shifted forward so that the most
+    negative latency becomes zero, plus the optional *base_latency*.
+
+    This is a pure-Python implementation of the Numba-based function in
+    pm-hftbacktest's ``validation.correct_local_timestamp``.
+
+    Args:
+        data: Event array with ``exch_ts`` and ``local_ts`` fields.
+        base_latency: Additional latency (ns) to add after zeroing the minimum.
+
+    Returns:
+        The same array with corrected ``local_ts`` (modified in-place).
+    """
+    if len(data) == 0:
+        return data
+
+    min_latency = np.min(data["local_ts"] - data["exch_ts"])
+    if min_latency < 0:
+        offset = int(-min_latency + base_latency)
+        data["local_ts"] += offset
+    return data
+
+
+# ── Event order validation ───────────────────────────────────────────────
+
+
+def validate_event_order(data: NDArray) -> None:
+    """Validate that events in the array have correct ordering.
+
+    Raises:
+        ValueError: If exchange events are out of order or
+            local events are out of order.
+    """
+    if len(data) == 0:
+        return
+
+    exch_mask = data["ev"] & EXCH_EVENT == EXCH_EVENT
+    local_mask = data["ev"] & LOCAL_EVENT == LOCAL_EVENT
+
+    if exch_mask.any():
+        exch_ts = data["exch_ts"][exch_mask]
+        if np.any(np.diff(exch_ts) < 0):
+            raise ValueError("Exchange events are out of order")
+
+    if local_mask.any():
+        local_ts = data["local_ts"][local_mask]
+        if np.any(np.diff(local_ts) < 0):
+            raise ValueError("Local events are out of order")
+
+
+# ── Market settlement ────────────────────────────────────────────────────
+
+
+def _settle_price_from_winning_outcome(winning_outcome: Any) -> float | None:
+    """Parse settlement price from a winning outcome.
+
+    Returns 1.0 for yes/true/up, 0.0 for no/false/down, None for unresolved.
+    """
+    if winning_outcome is None:
+        return None
+
+    if isinstance(winning_outcome, str):
+        outcome = winning_outcome.strip().lower()
+        if outcome in {"yes", "true", "1", "up"}:
+            return 1.0
+        if outcome in {"no", "false", "0", "down"}:
+            return 0.0
+        return None
+
+    try:
+        return 1.0 if float(winning_outcome) > 0.5 else 0.0
+    except (TypeError, ValueError):
+        return None
+
+
+def _make_resolved_book_row(
+    rows: list[dict[str, Any]],
+    settle_price: float,
+) -> dict[str, Any] | None:
+    """Create a fake orderbook row after market settlement.
+
+    At *settle_price* == 1.0, the book shows bid at 0.998 / ask at 1.0.
+    At *settle_price* == 0.0, the book shows bid at 0.001 / ask at 0.003.
+
+    Returns a single row dict suitable for ``_make_book_events``, or None
+    if no settlement can be determined.
+    """
+    # Find the last row to copy timestamp from
+    if not rows:
+        return None
+
+    last_ts = str(rows[-1].get("timestamp", "0"))
+    last_local = str(rows[-1].get("local_timestamp", last_ts))
+
+    if settle_price == 1.0:
+        return {
+            "timestamp": last_ts,
+            "local_timestamp": last_local,
+            "bids": [{"price": 0.998, "size": 0.01}],
+            "asks": [{"price": 1.0, "size": 0.01}],
+        }
+    else:
+        return {
+            "timestamp": last_ts,
+            "local_timestamp": last_local,
+            "bids": [{"price": 0.001, "size": 0.01}],
+            "asks": [{"price": 0.003, "size": 0.01}],
+        }
+
+
+def _apply_market_settlement(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Scan rows for a market_resolved indicator and append a settlement book row.
+
+    Looks for any row with a ``winning_outcome`` field. If found, appends
+    a fake orderbook snapshot reflecting the settlement price at the end
+    of the data.
+    """
+    settle_price = None
+    for row in rows:
+        outcome = row.get("winning_outcome")
+        if outcome is not None:
+            price = _settle_price_from_winning_outcome(outcome)
+            if price is not None:
+                settle_price = price
+
+    if settle_price is None:
+        return rows
+
+    resolved_row = _make_resolved_book_row(rows, settle_price)
+    if resolved_row is None:
+        return rows
+
+    return rows + [resolved_row]
+
+
 # ── Orderbook conversion ─────────────────────────────────────────────────
 
 
@@ -344,6 +486,8 @@ def rows_to_hbt(
     *,
     data_type: str = "orderbooks",
     constant_latency: int | None = None,
+    correct_ts: bool = True,
+    settlement: bool = False,
 ) -> NDArray:
     """Convert collected data rows to an hftbacktest event array.
 
@@ -355,6 +499,11 @@ def rows_to_hbt(
             When provided it takes priority over ``local_timestamp``;
             otherwise ``local_timestamp`` is used if available, falling
             back to 20ms.
+        correct_ts: If ``True`` (default), apply :func:`correct_local_timestamp`
+            to fix negative feed latency.
+        settlement: If ``True`` and the rows contain a ``winning_outcome``
+            field, append a resolved orderbook snapshot at the end
+            reflecting the settlement price.
 
     Returns:
         A numpy structured array with ``event_dtype``, sorted by exchange
@@ -364,6 +513,10 @@ def rows_to_hbt(
         return np.zeros(0, dtype=event_dtype)
 
     data_type = data_type.lower()
+
+    # Optionally apply market settlement (appends a final book row)
+    if settlement and data_type == "orderbooks":
+        rows = _apply_market_settlement(rows)
 
     if data_type == "orderbooks":
         events = _make_book_events(rows, constant_latency)
@@ -377,6 +530,10 @@ def rows_to_hbt(
 
     # Sort by exchange timestamp (stable sort)
     events = events[np.argsort(events["exch_ts"], kind="mergesort")]
+
+    # Correct negative feed latency
+    if correct_ts:
+        correct_local_timestamp(events)
 
     # Correct event ordering
     return correct_event_order(events)
@@ -421,6 +578,8 @@ def convert_from_data_dir(
     *,
     data_type: str = "orderbooks",
     constant_latency: int | None = None,
+    correct_ts: bool = True,
+    settlement: bool = False,
 ) -> int:
     """Collect data from *data_dir*, convert to hftbacktest events, and save.
 
@@ -432,6 +591,10 @@ def convert_from_data_dir(
         output: Output ``.npy`` file path.
         data_type: ``"orderbooks"`` or ``"trades"``.
         constant_latency: Optional fixed latency in nanoseconds.
+        correct_ts: If ``True`` (default), apply :func:`correct_local_timestamp`
+            to fix negative feed latency.
+        settlement: If ``True`` and the data contains a ``winning_outcome``
+            field, append a resolved orderbook snapshot.
 
     Returns:
         Number of events written (0 if nothing to convert).
@@ -448,7 +611,13 @@ def convert_from_data_dir(
     if not rows:
         return 0
 
-    events = rows_to_hbt(rows, data_type=data_type, constant_latency=constant_latency)
+    events = rows_to_hbt(
+        rows,
+        data_type=data_type,
+        constant_latency=constant_latency,
+        correct_ts=correct_ts,
+        settlement=settlement,
+    )
     save_event_array(events, output)
     return len(events)
 
@@ -483,6 +652,16 @@ def main() -> None:
         default=None,
         help="Fixed latency in nanoseconds (default: use local_timestamp, fallback 20ms)",
     )
+    parser.add_argument(
+        "--settlement",
+        action="store_true",
+        help="Append a resolved orderbook snapshot at the end if winning_outcome is present",
+    )
+    parser.add_argument(
+        "--no-correct-ts",
+        action="store_true",
+        help="Skip negative feed latency correction (default: auto-correct)",
+    )
     args = parser.parse_args()
 
     count = convert_from_data_dir(
@@ -490,6 +669,8 @@ def main() -> None:
         output=args.output,
         data_type=args.data_type,
         constant_latency=args.constant_latency,
+        correct_ts=not args.no_correct_ts,
+        settlement=args.settlement,
     )
     if count > 0:
         print(f"✅ Converted {count} events → {args.output}")

@@ -20,17 +20,22 @@ from polymarket_l2_collector.hbt_converter import (
     POLY_MIN_PRICE,
     SELL_EVENT,
     TRADE_EVENT,
+    _apply_market_settlement,
     _extract_book_side,
     _iterable_items,
     _local_ts_ns,
     _make_book_events,
+    _make_resolved_book_row,
     _make_trade_events,
+    _settle_price_from_winning_outcome,
     _ts_str_to_ns,
     correct_event_order,
+    correct_local_timestamp,
     event_dtype,
     load_event_array,
     rows_to_hbt,
     save_event_array,
+    validate_event_order,
 )
 
 # ── Event dtype structure ────────────────────────────────────────────────
@@ -357,6 +362,180 @@ class TestCorrectEventOrder:
         assert result[2]["ev"] & LOCAL_EVENT
 
 
+# ── Correct local timestamp ──────────────────────────────────────────────
+
+
+class TestCorrectLocalTimestamp:
+    def test_empty_array(self):
+        data = np.zeros(0, dtype=event_dtype)
+        result = correct_local_timestamp(data)
+        assert len(result) == 0
+
+    def test_no_correction_needed(self):
+        """When all latencies are >= 0, no change."""
+        data = np.zeros(3, dtype=event_dtype)
+        data["exch_ts"] = [100, 200, 300]
+        data["local_ts"] = [150, 250, 350]
+        original = data["local_ts"].copy()
+        correct_local_timestamp(data)
+        np.testing.assert_array_equal(data["local_ts"], original)
+
+    def test_corrects_negative_latency(self):
+        """Minimum feed latency is -90, so all timestamps shift by +90."""
+        data = np.zeros(3, dtype=event_dtype)
+        data["exch_ts"] = [100, 200, 300]
+        data["local_ts"] = [50, 110, 210]  # latencies: -50, -90, -90
+        correct_local_timestamp(data)
+        # Min latency was -90 → shift by +90
+        expected = np.array([140, 200, 300])
+        np.testing.assert_array_equal(data["local_ts"], expected)
+
+    def test_corrects_with_base_latency(self):
+        """Base latency adds extra offset on top of zeroing."""
+        data = np.zeros(2, dtype=event_dtype)
+        data["exch_ts"] = [100, 200]
+        data["local_ts"] = [80, 150]  # latencies: -20, -50
+        correct_local_timestamp(data, base_latency=10.0)
+        # Min latency was -50 → shift by +50+10 = +60
+        expected = np.array([140, 210])
+        np.testing.assert_array_equal(data["local_ts"], expected)
+
+    def test_no_negative_no_change(self):
+        """Zero minimum latency results in no shift (base_latency not added)."""
+        data = np.zeros(2, dtype=event_dtype)
+        data["exch_ts"] = [100, 200]
+        data["local_ts"] = [100, 210]
+        original = data["local_ts"].copy()
+        correct_local_timestamp(data, base_latency=5.0)
+        np.testing.assert_array_equal(data["local_ts"], original)
+
+
+# ── Validate event order ─────────────────────────────────────────────────
+
+
+class TestValidateEventOrder:
+    def test_empty_array(self):
+        validate_event_order(np.zeros(0, dtype=event_dtype))  # should not raise
+
+    def test_valid_order(self):
+        data = np.zeros(3, dtype=event_dtype)
+        data["ev"] = DEPTH_SNAPSHOT_EVENT | BUY_EVENT | EXCH_EVENT | LOCAL_EVENT
+        data["exch_ts"] = [100, 200, 300]
+        data["local_ts"] = [110, 210, 310]
+        validate_event_order(data)  # should not raise
+
+    def test_out_of_order_exch(self):
+        data = np.zeros(3, dtype=event_dtype)
+        data["ev"] = DEPTH_SNAPSHOT_EVENT | BUY_EVENT | EXCH_EVENT | LOCAL_EVENT
+        data["exch_ts"] = [100, 300, 200]  # out of order
+        with pytest.raises(ValueError, match="Exchange events are out of order"):
+            validate_event_order(data)
+
+
+# ── Settlement price ─────────────────────────────────────────────────────
+
+
+class TestSettlePriceFromWinningOutcome:
+    def test_none_returns_none(self):
+        assert _settle_price_from_winning_outcome(None) is None
+
+    def test_yes_string(self):
+        assert _settle_price_from_winning_outcome("yes") == 1.0
+
+    def test_true_string(self):
+        assert _settle_price_from_winning_outcome("true") == 1.0
+
+    def test_up_string(self):
+        assert _settle_price_from_winning_outcome("up") == 1.0
+
+    def test_no_string(self):
+        assert _settle_price_from_winning_outcome("no") == 0.0
+
+    def test_false_string(self):
+        assert _settle_price_from_winning_outcome("false") == 0.0
+
+    def test_down_string(self):
+        assert _settle_price_from_winning_outcome("down") == 0.0
+
+    def test_one_int(self):
+        assert _settle_price_from_winning_outcome(1) == 1.0
+
+    def test_zero_int(self):
+        assert _settle_price_from_winning_outcome(0) == 0.0
+
+    def test_0_6_float(self):
+        assert _settle_price_from_winning_outcome(0.6) == 1.0
+
+    def test_0_4_float(self):
+        assert _settle_price_from_winning_outcome(0.4) == 0.0
+
+    def test_unrecognized_string(self):
+        assert _settle_price_from_winning_outcome("unknown") is None
+
+    def test_invalid_type(self):
+        assert _settle_price_from_winning_outcome([]) is None  # not convertible
+
+
+class TestMakeResolvedBookRow:
+    def test_empty_rows_returns_none(self):
+        assert _make_resolved_book_row([], 1.0) is None
+
+    def test_settle_at_one(self):
+        rows = [{"timestamp": "1000", "local_timestamp": "1100"}]
+        result = _make_resolved_book_row(rows, 1.0)
+        assert result is not None
+        assert result["bids"][0]["price"] == 0.998
+        assert result["asks"][0]["price"] == 1.0
+
+    def test_settle_at_zero(self):
+        rows = [{"timestamp": "1000", "local_timestamp": "1100"}]
+        result = _make_resolved_book_row(rows, 0.0)
+        assert result is not None
+        assert result["bids"][0]["price"] == 0.001
+        assert result["asks"][0]["price"] == 0.003
+
+    def test_uses_last_timestamp(self):
+        rows = [
+            {"timestamp": "1000", "local_timestamp": "1100"},
+            {"timestamp": "2000", "local_timestamp": "2100"},
+        ]
+        result = _make_resolved_book_row(rows, 1.0)
+        assert result["timestamp"] == "2000"
+
+
+class TestApplyMarketSettlement:
+    def test_no_winning_outcome(self):
+        rows = [{"timestamp": "1000", "bids": [], "asks": []}]
+        result = _apply_market_settlement(rows)
+        assert len(result) == 1  # unchanged
+
+    def test_appends_resolved_row(self):
+        rows = [
+            {"timestamp": "1000", "bids": [{"price": 0.5, "size": 100}], "asks": []},
+            {"timestamp": "2000", "winning_outcome": "yes"},
+        ]
+        result = _apply_market_settlement(rows)
+        assert len(result) == 3  # original 2 + 1 resolved
+        # Last row should be resolved book
+        last = result[-1]
+        assert last["bids"][0]["price"] == 0.998
+
+    def test_multiple_outcomes_last_wins(self):
+        rows = [
+            {"timestamp": "1000", "winning_outcome": "no"},
+            {"timestamp": "2000", "winning_outcome": "yes"},
+        ]
+        result = _apply_market_settlement(rows)
+        assert len(result) == 3
+        last = result[-1]
+        assert last["bids"][0]["price"] == 0.998  # yes wins
+
+    def test_unrecognized_outcome_ignored(self):
+        rows = [{"timestamp": "1000", "winning_outcome": "maybe"}]
+        result = _apply_market_settlement(rows)
+        assert len(result) == 1  # no change
+
+
 # ── Rows to HBT (integration) ────────────────────────────────────────────
 
 
@@ -420,6 +599,49 @@ class TestRowsToHbt:
         for ev in events:
             if ev["ev"] & LOCAL_EVENT:
                 assert ev["local_ts"] == ev["exch_ts"] + 10_000_000
+
+    def test_settlement_appends_book(self):
+        """When settlement=True and winning_outcome present, a resolved book is appended."""
+        rows = [
+            {"timestamp": "1000", "bids": [{"price": 0.50, "size": 100}], "asks": []},
+            {"timestamp": "2000", "winning_outcome": "yes"},
+        ]
+        events = rows_to_hbt(rows, data_type="orderbooks", settlement=True)
+        # The resolved row adds a snap-bid at 0.998
+        snap_bid_events = [ev for ev in events if ev["ev"] & DEPTH_SNAPSHOT_EVENT and float(ev["px"]) == 0.998]
+        assert len(snap_bid_events) > 0
+        # Verify the resolved row's ask price (1.0) is present
+        snap_ask_events = [ev for ev in events if ev["ev"] & DEPTH_SNAPSHOT_EVENT and float(ev["px"]) == 1.0]
+        assert len(snap_ask_events) > 0
+
+    def test_settlement_false_default(self):
+        """Without settlement=True, winning_outcome rows are treated as book rows."""
+        rows = [
+            {"timestamp": "1000", "bids": [{"price": 0.50, "size": 100}], "asks": []},
+            {"timestamp": "2000", "winning_outcome": "yes"},
+        ]
+        events = rows_to_hbt(rows, data_type="orderbooks", settlement=False)
+        # Row 0: 3 events (clear-bid + snap-bid + clear-ask)
+        # Row 1 (no bids/asks): 2 events (clear-bid + clear-ask)
+        assert len(events) == 5
+
+    def test_correct_ts_fixes_negative_latency(self):
+        """When correct_ts=True, negative local_ts latency is fixed."""
+        rows = [
+            {"timestamp": "1000", "local_timestamp": "990", "bids": [{"price": 0.50, "size": 100}], "asks": []},
+        ]
+        events = rows_to_hbt(rows, data_type="orderbooks", correct_ts=True)
+        for ev in events:
+            assert ev["local_ts"] >= ev["exch_ts"]  # no negative latency
+
+    def test_correct_ts_false_skips_fix(self):
+        """When correct_ts=False, negative latency is preserved."""
+        rows = [
+            {"timestamp": "1000", "local_timestamp": "990", "bids": [{"price": 0.50, "size": 100}], "asks": []},
+        ]
+        events = rows_to_hbt(rows, data_type="orderbooks", correct_ts=False)
+        # local_ts should be less than exch_ts (negative latency preserved)
+        assert events[0]["local_ts"] < events[0]["exch_ts"]
 
     def test_book_rows_without_bids_asks(self):
         """Rows without bids/asks keys still produce empty-side clear events."""
