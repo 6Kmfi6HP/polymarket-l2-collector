@@ -4,7 +4,6 @@
 
 This stub is kept for backward compatibility.
 """
-import sys
 import warnings
 
 warnings.warn(
@@ -13,6 +12,6 @@ warnings.warn(
     stacklevel=2,
 )
 
-from polymarket_l2_collector.main import main
+from polymarket_l2_collector.main import main  # noqa: E402
 
 main()
