@@ -133,6 +133,20 @@ class TestExtractBookSide:
         assert prices == []
         assert sizes == []
 
+    def test_zero_price_preserved(self):
+        """price=0.0 should not be treated as missing (falsy)."""
+        levels = [{"price": 0.0, "size": 100}]
+        prices, sizes = _extract_book_side(levels)
+        assert prices == [0.0]
+        assert sizes == [100.0]
+
+    def test_zero_size_preserved(self):
+        """size=0.0 should not be treated as missing (falsy)."""
+        levels = [{"price": 0.5, "size": 0.0}]
+        prices, sizes = _extract_book_side(levels)
+        assert prices == [0.5]
+        assert sizes == [0.0]
+
 
 # ── Iterable items ───────────────────────────────────────────────────────
 

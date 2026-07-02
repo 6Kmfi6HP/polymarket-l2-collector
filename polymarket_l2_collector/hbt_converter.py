@@ -246,6 +246,9 @@ def _extract_book_side(levels: Any) -> tuple[list[float], list[float]]:
 
     Handles both the raw collector format (``{"p": ..., "s": ...}`` or
     ``{"price": ..., "size": ...}``) and list-of-lists.
+
+    Note: uses ``is not None`` checks so that legitimate zero values (e.g.
+    ``price=0.0`` for a settled market) are not silently dropped.
     """
     prices: list[float] = []
     sizes: list[float] = []
@@ -253,8 +256,8 @@ def _extract_book_side(levels: Any) -> tuple[list[float], list[float]]:
         return prices, sizes
     for item in levels:
         if isinstance(item, dict):
-            px = item.get("price") or item.get("p")
-            sz = item.get("size") or item.get("s")
+            px = item.get("price") if item.get("price") is not None else item.get("p")
+            sz = item.get("size") if item.get("size") is not None else item.get("s")
             if px is not None and sz is not None:
                 prices.append(float(px))
                 sizes.append(float(sz))
