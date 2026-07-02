@@ -17,6 +17,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pytz>=2023.3",
     "requests>=2.31.0",
+    "numpy>=2.2.6",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +35,7 @@ polymarket-backfill = "polymarket_l2_collector.rest_snapshot:main"
 polymarket-export = "polymarket_l2_collector.export_pipeline:main"
 polymarket-pipeline = "polymarket_l2_collector.pipeline:main"
 polymarket-data-retention = "polymarket_l2_collector.data_retention:main"
+polymarket-hbt-convert = "polymarket_l2_collector.hbt_converter:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
