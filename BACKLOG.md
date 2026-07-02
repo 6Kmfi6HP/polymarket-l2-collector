@@ -7,3 +7,4 @@
 | CLOB 全量市场列表下载：从 CLOB API 分页并发抓取全部市场，写入 markets.csv，支持断点续传 | poly_data `update_utils/update_markets.py` | 待测 | |
 | 管道编排：串联 markets → export 等阶段，CLI 入口 `polymarket-pipeline` | poly_data `update_utils/pipeline.py` | 待测 | |
 | 市场元数据富化：导出时通过 slug 从 Gamma API 获取 question/outcomes/closed 并附加到每行 | 受 poly_data `process_live._processed_df()` 启发（JOIN 市场元数据模式） | 待测 | |
+| 配置输入验证：Settings 启动时检查所有字段类型、范围、合法性；42 条测试覆盖默认值/环境变量/validation 成功失败/load_settings 缓存 | poly_data 无对应模块（项目自身质量需求）；参考 poly_data `process_live` 的输入校验模式 | 待测 | |
