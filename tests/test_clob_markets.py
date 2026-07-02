@@ -186,6 +186,49 @@ class TestReadTailIds:
         assert "id" not in ids
         assert ids == {"abc"}
 
+    def test_file_smaller_than_chunk(self, tmp_path) -> None:
+        """File under 16MB reads the entire file correctly."""
+        p = tmp_path / "markets.csv"
+        p.write_text("id,col\n" + "\n".join(f"id{i},v{i}" for i in range(10)))
+        ids = _read_tail_ids(str(p), 5)
+        assert len(ids) == 5
+
+
+class TestSaveLoadState:
+    """State persistence for resumable fetches."""
+
+    def test_load_missing_state(self, tmp_path) -> None:
+        from polymarket_l2_collector.clob_markets import _load_state
+
+        state = _load_state(str(tmp_path))
+        assert state == {}
+
+    def test_save_and_load(self, tmp_path) -> None:
+        from polymarket_l2_collector.clob_markets import _load_state, _save_state
+
+        _save_state(str(tmp_path), 5000, 42, ["id", "col"], completed=False)
+        state = _load_state(str(tmp_path))
+        assert state["offset"] == 5000
+        assert state["fetched"] == 42
+        assert state["columns"] == ["id", "col"]
+        assert state["completed"] is False
+
+    def test_save_and_load_completed(self, tmp_path) -> None:
+        from polymarket_l2_collector.clob_markets import _load_state, _save_state
+
+        _save_state(str(tmp_path), 10000, 999, ["a"], completed=True)
+        state = _load_state(str(tmp_path))
+        assert state["completed"] is True
+        assert state["fetched"] == 999
+
+    def test_corrupted_state_returns_empty(self, tmp_path) -> None:
+        from polymarket_l2_collector.clob_markets import _load_state
+
+        p = tmp_path / "markets_state.json"
+        p.write_text("not valid json")
+        state = _load_state(str(tmp_path))
+        assert state == {}
+
 
 class TestEmptyFetch:
     """Edge-case: no data available from the API."""

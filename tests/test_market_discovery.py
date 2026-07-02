@@ -28,6 +28,17 @@ class TestEventSlug:
         assert slug == "eth-updown-15m-1765360800"
 
 
+class TestEventUrl:
+    """Event URL construction."""
+
+    def test_url_contains_slug(self):
+        from polymarket_l2_collector.market_discovery import _build_event_url
+
+        url = _build_event_url("btc", "5m", 1765359900)
+        assert "btc-updown-5m-1765359900" in url
+        assert url.startswith("https://polymarket.com/event/")
+
+
 class TestAssetParsing:
     """Parsing Gamma API market responses."""
 

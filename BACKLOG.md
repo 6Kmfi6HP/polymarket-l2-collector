@@ -16,3 +16,4 @@
 | main 模块提取 + 单元测试：提取 compute_restart_delay 纯函数，10 条测试覆盖退避算法（3s/60s/120s 阶梯）和 GracefulKiller 信号处理 | 项目自身质量需求 | 待测 | |
 | file_cache 测试补全：14 条新测试覆盖原子写入、缓存保存/flush、空缓存窗口清理、None/未知字段容错 | 项目自身质量需求（数据持久化的关键路径） | 待测 | |
 | read_last_line 共享工具函数：从 poly_data 移植，高效读取大文件末行（seek backward），9 条测试覆盖 UTF-8/大行/空行/缺失文件 | poly_data `process_live.py` `_read_last_line()` | 待测 | |
+| clob_markets / market_discovery 测试补全：_save_state / _load_state / _build_event_url 覆盖 + 大文件尾读取边界测试 | poly_data `test_update_markets.py` 测试模式 | 待测 | |
