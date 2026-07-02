@@ -11,3 +11,4 @@
 | data_formatter 单元测试：25 条测试覆盖 format_orderbook/format_trade 的格式化逻辑、资产过滤、缺失字段、Binance 价格查询 | 参考 poly_data `test_utils.py` 的测试模式（测试数据管线的第一道入口） | 待测 | |
 | logger_config 单元测试：25 条测试覆盖 get_logger 缓存、plain/json 格式、log_context 上下文注入、_JsonFormatter | 项目自身质量需求（poly_data 无对应模块，但该模块被所有其他模块依赖） | 待测 | |
 | get_asset_id 单元测试：22 条测试覆盖同步/异步 Gamma API 调用、JSON 解析、HTTP 错误、会话生命周期、search_markets、CLI 入口 | poly_data `test_utils.py` 测试模式（HTTP 客户端独立测试） | 待测 | |
+| extract_asset_id 单元测试：11 条测试覆盖 CLI 工具的输出格式化、空数据、JSON 字符串字段、文件/标准输入读取 | poly_data `test_utils.py` 测试模式 | 待测 | |
