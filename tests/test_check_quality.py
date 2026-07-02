@@ -176,3 +176,65 @@ def test_check_quality_failed_window():
 
         report = scan_data_quality(td)
         assert any("1765359900up.parquet" in f for f in report["failed_windows"])
+
+
+def test_check_quality_zero_message_meta():
+    """.meta.json with message_count == 0 should be flagged."""
+    import json
+
+    import pandas as pd
+
+    with tempfile.TemporaryDirectory() as td:
+        pdir = Path(td) / "5m" / "btc" / "orderbooks"
+        pdir.mkdir(parents=True)
+
+        pp = pdir / "1765359900up.parquet"
+        pd.DataFrame({"a": [1]}).to_parquet(str(pp))
+
+        meta = {
+            "interval": "5m", "coin": "btc", "data_type": "orderbooks",
+            "direction": "up", "window_ts": 1765359900,
+            "message_count": 0, "status": "complete",
+        }
+        mp = pdir / "1765359900up.meta.json"
+        mp.write_text(json.dumps(meta))
+
+        report = scan_data_quality(td)
+        assert any("1765359900up.parquet" in f for f in report["zero_message_meta"])
+
+
+def test_check_quality_duplicate_timestamps():
+    """Two parquet files with same window_ts + direction (in different
+    subdirectories) should be flagged as duplicates."""
+    import pandas as pd
+
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td) / "5m" / "btc" / "orderbooks"
+        base.mkdir(parents=True)
+
+        # Two separate subdirectories, each with 1000up.parquet
+        for sub in ("batch1", "batch2"):
+            d = base / sub
+            d.mkdir()
+            pp = d / "1000up.parquet"
+            pd.DataFrame({"a": [1]}).to_parquet(str(pp))
+
+        report = scan_data_quality(td)
+        assert len(report["duplicate_ts"]) == 1
+        assert "1000up" in report["duplicate_ts"][0]
+
+
+def test_check_quality_no_duplicate_for_different_directions():
+    """up and down with the same window_ts should NOT be flagged."""
+    import pandas as pd
+
+    with tempfile.TemporaryDirectory() as td:
+        pdir = Path(td) / "5m" / "btc" / "orderbooks"
+        pdir.mkdir(parents=True)
+
+        for direction in ("up", "down"):
+            pp = pdir / f"1000{direction}.parquet"
+            pd.DataFrame({"a": [1]}).to_parquet(str(pp))
+
+        report = scan_data_quality(td)
+        assert report["duplicate_ts"] == []
