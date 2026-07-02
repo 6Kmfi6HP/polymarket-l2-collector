@@ -1,6 +1,6 @@
 [project]
 name = "polymarket-l2-collector"
-version = "0.2.0"
+version = "0.3.0"
 description = "Polymarket L2 orderbook data collector — BTC/ETH, 5m/15m windows, real-time WebSocket ingestion to Parquet"
 readme = "README.md"
 requires-python = ">=3.10"
