@@ -274,14 +274,27 @@ async def main_async() -> None:
 
         duration = time.time() - start
         quick_restarts = quick_restarts + 1 if duration < min_session_s else 0
-        delay = 3
+        delay = compute_restart_delay(quick_restarts)
         if quick_restarts > 3:
-            delay = min(30 * (2 ** min(quick_restarts - 3, 3)), 120)
             logger.warning("Backing off %ds after %d quick restarts", delay, quick_restarts)
         logger.info("Restarting in %ds …", delay)
         await asyncio.sleep(delay)
 
     logger.info("Program exited")
+
+
+def compute_restart_delay(quick_restarts: int) -> int:
+    """Compute the restart delay (seconds) based on quick-restart count.
+
+    *quick_restarts* should already include the current session and be
+    reset to 0 if the last session ran a normal duration.
+
+    Returns:
+        Delay in seconds before the next restart attempt (3, 60, or 120).
+    """
+    if quick_restarts > 3:
+        return min(30 * (2 ** min(quick_restarts - 3, 3)), 120)
+    return 3
 
 
 def main() -> None:

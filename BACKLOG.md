@@ -12,3 +12,5 @@
 | logger_config 单元测试：25 条测试覆盖 get_logger 缓存、plain/json 格式、log_context 上下文注入、_JsonFormatter | 项目自身质量需求（poly_data 无对应模块，但该模块被所有其他模块依赖） | 待测 | |
 | get_asset_id 单元测试：22 条测试覆盖同步/异步 Gamma API 调用、JSON 解析、HTTP 错误、会话生命周期、search_markets、CLI 入口 | poly_data `test_utils.py` 测试模式（HTTP 客户端独立测试） | 待测 | |
 | extract_asset_id 单元测试：11 条测试覆盖 CLI 工具的输出格式化、空数据、JSON 字符串字段、文件/标准输入读取 | poly_data `test_utils.py` 测试模式 | 待测 | |
+| check_quality 测试补全：3 条测试覆盖 zero_message_meta 和 duplicate_ts（scan_data_quality 全部 7 个维度 100% 覆盖） | poly_data `test_update_markets.py` 测试模式（全面性） | 待测 | |
+| main 模块提取 + 单元测试：提取 compute_restart_delay 纯函数，10 条测试覆盖退避算法（3s/60s/120s 阶梯）和 GracefulKiller 信号处理 | 项目自身质量需求 | 待测 | |
