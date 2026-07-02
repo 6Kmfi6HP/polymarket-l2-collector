@@ -2,7 +2,7 @@
 
 | 功能 | 来源 | 状态 | 测试结论 |
 |------|------|------|----------|
-| hftbacktest 事件格式转换器：将 Parquet 导出数据转换为 hftbacktest 兼容的 numpy event_dtype 数组（orderbook/trade/combined 转换、时间戳处理、事件顺序修正 `correct_event_order`、负延迟修正 `correct_local_timestamp`、事件验证 `validate_event_order`、市场结算 `--settlement`、CLI 入口 `polymarket-hbt-convert`；88 条测试覆盖） | pm-hftbacktest `polymarket_to_hbt()` + `correct_event_order()` + `correct_local_timestamp()` + `validate_event_order()` | 待测 | |
+| hftbacktest 事件格式转换器：将 Parquet 导出数据转换为 hftbacktest 兼容的 numpy event_dtype 数组（orderbook/trade/combined 转换、时间戳处理、事件顺序修正 `correct_event_order`、负延迟修正 `correct_local_timestamp`、事件验证 `validate_event_order`、市场结算 `--settlement`、事件摘要 `--summary`、事件校验 `--validate`、CLI 入口 `polymarket-hbt-convert`；97 条测试覆盖） | pm-hftbacktest `polymarket_to_hbt()` + `correct_event_order()` + `correct_local_timestamp()` + `validate_event_order()` | 待测 | |
 | 合并回测事件流：`--data-type combined` 同时读取 orderbook 和 trade 数据，自动分类转换并合并为一个有序事件数组 | 项目自身需求（hbt_converter 增强；pm-hftbacktest 回测引擎需要合并的 orderbook+trade 事件流） | 待测 | |
 | 回测统计模块：回测 record_dtype → Pandas DataFrame → 结算价格修复 → 核心指标计算（Shapre、Sortino、MaxDrawdown、Return、NumTrades、MaxPositionValue）；PolyAssetRecord 类支持 resample/partition/stats 链式调用；39 条测试覆盖 | pm-hftbacktest `hftbacktest.stats`（`metrics.py` + `stats.py`，`PolyAssetRecord`） | 待测 | |
 | 聚合导出管道：扫描所有窗口 Parquet，去重合并，输出统一 Parquet/CSV | poly_data `update_utils/process_live.py` | 待测 | |
