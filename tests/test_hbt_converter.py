@@ -654,6 +654,45 @@ class TestRowsToHbt:
         assert events[0]["ev"] & DEPTH_CLEAR_EVENT
         assert events[1]["ev"] & DEPTH_CLEAR_EVENT
 
+    def test_combined_orderbooks_and_trades(self):
+        """Combined mode merges orderbook and trade events sorted by timestamp."""
+        rows = [
+            {"timestamp": "2000", "bids": [{"price": 0.50, "size": 100}], "asks": []},
+            {"timestamp": "1000", "price": "0.48", "size": "50", "side": "buy"},
+            {"timestamp": "1500", "price": "0.49", "size": "75", "side": "sell"},
+        ]
+        events = rows_to_hbt(rows, data_type="combined")
+        assert len(events) > 0
+        # First event should be the trade at ts=1000 (earliest)
+        assert events[0]["exch_ts"] == 1000000000  # "1000" → 1B ns
+        assert events[0]["ev"] & TRADE_EVENT
+        # There should be both TRADE_EVENT and DEPTH_CLEAR_EVENT/DEPTH_SNAPSHOT_EVENT events
+        has_trade = any(ev["ev"] & TRADE_EVENT for ev in events)
+        has_depth = any(ev["ev"] & DEPTH_CLEAR_EVENT for ev in events)
+        assert has_trade
+        assert has_depth
+
+    def test_combined_empty(self):
+        assert len(rows_to_hbt([], data_type="combined")) == 0
+
+    def test_combined_only_trades(self):
+        """Combined mode with only trade rows should work."""
+        rows = [
+            {"timestamp": "1000", "price": "0.50", "size": "100", "side": "buy"},
+        ]
+        events = rows_to_hbt(rows, data_type="combined")
+        assert len(events) > 0
+        assert events[0]["ev"] & TRADE_EVENT
+
+    def test_combined_only_books(self):
+        """Combined mode with only orderbook rows should work."""
+        rows = [
+            {"timestamp": "1000", "bids": [{"price": 0.50, "size": 100}], "asks": []},
+        ]
+        events = rows_to_hbt(rows, data_type="combined")
+        assert len(events) > 0
+        assert events[0]["ev"] & DEPTH_CLEAR_EVENT
+
 
 # ── Save / Load ──────────────────────────────────────────────────────────
 

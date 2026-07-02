@@ -514,16 +514,29 @@ def rows_to_hbt(
 
     data_type = data_type.lower()
 
-    # Optionally apply market settlement (appends a final book row)
-    if settlement and data_type == "orderbooks":
-        rows = _apply_market_settlement(rows)
-
     if data_type == "orderbooks":
+        # Optionally apply market settlement (appends a final book row)
+        if settlement:
+            rows = _apply_market_settlement(rows)
         events = _make_book_events(rows, constant_latency)
     elif data_type == "trades":
         events = _make_trade_events(rows, constant_latency)
+    elif data_type == "combined":
+        # Split rows by type: orderbook rows have bids/asks, trade rows have price/size
+        book_rows = [r for r in rows if "bids" in r or "asks" in r]
+        trade_rows = [r for r in rows if ("price" in r or "size" in r) and "bids" not in r and "asks" not in r]
+        if settlement:
+            book_rows = _apply_market_settlement(book_rows)
+        parts: list[NDArray] = []
+        if book_rows:
+            parts.append(_make_book_events(book_rows, constant_latency))
+        if trade_rows:
+            parts.append(_make_trade_events(trade_rows, constant_latency))
+        if not parts:
+            return np.zeros(0, dtype=event_dtype)
+        events = np.concatenate(parts) if len(parts) > 1 else parts[0]
     else:
-        raise ValueError(f"Unknown data_type: {data_type!r} (expected 'orderbooks' or 'trades')")
+        raise ValueError(f"Unknown data_type: {data_type!r} (expected 'orderbooks', 'trades', or 'combined')")
 
     if len(events) == 0:
         return events
@@ -589,7 +602,8 @@ def convert_from_data_dir(
     Args:
         data_dir: Root data directory (same as export_pipeline's ``data_dir``).
         output: Output ``.npy`` file path.
-        data_type: ``"orderbooks"`` or ``"trades"``.
+        data_type: ``"orderbooks"``, ``"trades"``, or ``"combined"``
+            (both orderbooks and trades merged in one event stream).
         constant_latency: Optional fixed latency in nanoseconds.
         correct_ts: If ``True`` (default), apply :func:`correct_local_timestamp`
             to fix negative feed latency.
@@ -605,6 +619,8 @@ def convert_from_data_dir(
         rows = collect_orderbooks(data_dir)
     elif data_type == "trades":
         rows = collect_trades(data_dir)
+    elif data_type == "combined":
+        rows = collect_orderbooks(data_dir) + collect_trades(data_dir)
     else:
         raise ValueError(f"Unknown data_type: {data_type!r}")
 
@@ -643,8 +659,8 @@ def main() -> None:
     parser.add_argument(
         "--data-type",
         default="orderbooks",
-        choices=["orderbooks", "trades"],
-        help="Data type to convert (default: orderbooks)",
+        choices=["orderbooks", "trades", "combined"],
+        help="Data type to convert (default: orderbooks; 'combined' merges orderbooks+trades)",
     )
     parser.add_argument(
         "--constant-latency",
