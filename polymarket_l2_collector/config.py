@@ -82,6 +82,9 @@ class Settings:
         default_factory=lambda: os.getenv("CHAIN_VERIFY_ENABLED", "false").lower() in ("1", "true", "yes")
     )
 
+    # ── Data retention ────────────────────────────────────────────
+    data_retention_days: int = field(default_factory=lambda: int(os.getenv("DATA_RETENTION_DAYS", "0")))
+
     # ── Validation ────────────────────────────────────────────────
     def validate(self) -> None:
         """Validate all settings, raising ``SettingsValidationError`` if any
@@ -149,6 +152,9 @@ class Settings:
             errors.append(f"WALLET_SECONDARY_TIMEOUT must be >= 1 (got {self.wallet_secondary_timeout}")
         if self.wallet_verify_interval <= 0:
             errors.append(f"WALLET_VERIFY_INTERVAL must be > 0 (got {self.wallet_verify_interval})")
+
+        if self.data_retention_days < 0:
+            errors.append(f"DATA_RETENTION_DAYS must be >= 0 (got {self.data_retention_days})")
 
         if errors:
             raise SettingsValidationError(errors)

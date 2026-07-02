@@ -32,6 +32,7 @@ polymarket-check-quality = "polymarket_l2_collector.check_quality:main"
 polymarket-backfill = "polymarket_l2_collector.rest_snapshot:main"
 polymarket-export = "polymarket_l2_collector.export_pipeline:main"
 polymarket-pipeline = "polymarket_l2_collector.pipeline:main"
+polymarket-data-retention = "polymarket_l2_collector.data_retention:main"
 
 [build-system]
 requires = ["hatchling"]
