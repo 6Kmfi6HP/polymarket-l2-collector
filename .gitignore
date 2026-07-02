@@ -19,6 +19,19 @@ data/
 # Environment
 .env
 
+# Development artifacts
+.superpowers/
+.agents/
+.codegraph/
+.cursor/
+.omo/
+.claude/
+typings/
+*.ipynb
+scripts/
+pyrightconfig.json
+skills-lock.json
+
 # Editor / IDE
 .vscode/
 .idea/

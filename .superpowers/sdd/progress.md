@@ -1,8 +1,0 @@
-Task 1: complete (commit 9c23ab4, review clean)
-Task 2: complete (commit b7c595a)
-Task 3: complete (commit eafef60)
-Task 4: complete (commit 25ea7de)
-Task 5: complete (commit 2f7f02e)
-Task 6: complete (commit a63c355)
-Task 7: complete (commit 97f04e7)
-Task 8: complete (commit 97402eb)
